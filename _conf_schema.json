@@ -1,0 +1,47 @@
+{
+  "model": {
+    "description": "计价模型 ID，必须与 AstrBot 当前聊天模型相同；此项不切换模型",
+    "type": "string",
+    "default": "deepseek-flash"
+  },
+  "allowed_groups": {
+    "description": "启用原生聊天自动计费及充值的 QQ 群；其他群和私聊不接管",
+    "type": "list",
+    "default": []
+  },
+  "default_daily_limit": {
+    "description": "新用户每日限额（整数鲸元券）；修改不影响已有账户",
+    "type": "string",
+    "default": "3000"
+  },
+  "multiplier": {
+    "description": "服务收费倍率 K",
+    "type": "string",
+    "default": "1.5"
+  },
+  "cache_hit_price": {
+    "description": "缓存命中输入采购单价：人民币元/百万 Token；0 禁用调用",
+    "type": "string",
+    "default": "0"
+  },
+  "cache_miss_price": {
+    "description": "缓存未命中输入采购单价：人民币元/百万 Token；0 禁用调用",
+    "type": "string",
+    "default": "0"
+  },
+  "output_price": {
+    "description": "输出采购单价：人民币元/百万 Token；0 禁用调用",
+    "type": "string",
+    "default": "0"
+  },
+  "web_token": {
+    "description": "DeepSeek 开放平台（platform.deepseek.com）网页登录令牌（仅填令牌，不含 Bearer；不是模型 API Key）",
+    "type": "string",
+    "default": ""
+  },
+  "chat_reserve": {
+    "description": "每次原生聊天预占的整数鲸元券；结算不超过预占，超出由运营方承担",
+    "type": "string",
+    "default": "300"
+  }
+}

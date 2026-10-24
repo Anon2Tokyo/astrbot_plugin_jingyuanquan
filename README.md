@@ -1,14 +1,114 @@
-# astrbot-plugin-helloworld
+# 鲸元券 AstrBot 插件（MVP）
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+自动充值接口参考：[DeepSeek 网页支付与查单接口记录](docs/deepseek-payment-api.md)（已脱敏；实现参考本地 dsAutoPay）。
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+NapCat / OneBot QQ 群原生聊天自动计费与独立钱包。基于 [Soulter/helloworld](https://github.com/Soulter/helloworld) 模板开发，保留原许可证。
 
-# Supports
+当前实现：微信/支付宝扫码自动充值、人工充值、自动生成充值单号、余额、每日限额、AstrBot 原生聊天钩子、输入缓存分类计费、预占结算、消费流水、管理员统计和异常核对。单实例 SQLite；尚未在实际 AstrBot + NapCat 环境联调。
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+## 安装与配置
+
+1. 使用 Python 3.11+ 的当前 AstrBot 4.x，将此目录放进 `AstrBot/data/plugins/astrbot_plugin_jingyuanquan`。仓库：https://github.com/Anon2Tokyo/astrbot_plugin_jingyuanquan；尚未发布插件市场。
+2. 安装 `requirements.txt` 中的依赖（WebUI 安装插件时会处理依赖；手工复制请在 AstrBot 的 Python 环境运行 `python -m pip install -r requirements.txt`）。
+3. 在 AstrBot 中连接 NapCat 的 OneBot v11 适配器，配置 AstrBot 管理员 QQ 号。QQ群管理员身份不自动获得充值权限。
+4. 模型和 API Key 在 AstrBot 原有模型服务商中配置。插件只填写与实际聊天模型相同的计价模型 ID、计费群号和三项人民币采购单价。保存并重载插件；账户、价格快照和流水保存在 `data/plugin_data/astrbot_plugin_jingyuanquan/ledger.sqlite3`，不在插件源码目录。
+5. 使用管理员账号先给测试 QQ 充值，再按原来的方式 @机器人或使用唤醒词聊天。测试完成前不要开放真实付费运营。
+
+模型 API Key 由 AstrBot 模型服务商配置管理；插件不再单独持有或调用模型 API Key，不写入账本，不打印 API 响应或密钥。保护配置文件及数据库访问权限。插件不要求在聊天里提交密钥。
+
+`allowed_groups` 指定启用自动计费及充值的群，空列表不接管任何聊天。群外及私聊的原生聊天维持 AstrBot 自身行为。本版一组单价对应一个模型：`model` 必须与实际聊天模型 ID 一致；它不会切换 AstrBot 模型。默认单价全为 0，未填写时拦截计费群的模型请求。
+
+单价单位统一为 **人民币元 / 一百万 Token**，不是美元，不是每千 Token。参考 [官方价格页](https://api-docs.deepseek.com/quick_start/pricing/) 和实际账户账单填写，不在代码中固化供应商价格。当前 MVP 用实际 usage × 管理员配置单价计算成本；不读取供应商账单、不自动处理汇率、峰谷价、阶梯价或折扣。因此统计标为“配置价核算”，不应当作已与供应商核实的实际支付成本。若账户价格随时段变化，正式运营前须补充对应价格规则。
+
+## 扫码自动充值（v0.3.0）
+
+参考 `astrbot_plugin_dsAutoPay` 的支付接口与有限轮询实现，支付确认、钱包加券和流水写入共用 `ledger.sqlite3` 的一个事务。无需同时安装 dsAutoPay；不会导入它的历史订单或为历史付款补发鲸元券。
+
+配置新增 `web_token`：填写 DeepSeek 开放平台网页登录令牌（Bearer 后面的值），不是模型 API Key。空值关闭新建扫码订单。只通过管理员配置填写，保存后重载。现有 v0.2.0 整数账本会保留，并增加支付订单表；旧微券账本仍需单独迁移。
+
+| 命令 | 功能 |
+| --- | --- |
+| `/鲸元券扫码充值` | 显示支付方式 |
+| `/鲸元券微信充值 20元` | 微信二维码充值 |
+| `/鲸元券支付宝充值 20元` | 支付宝二维码充值 |
+| `/鲸元券充值账单` | 本人最近五笔订单，后接页码可翻页 |
+| `/鲸元券充值查询` | 核对本人最近一笔订单，也可后接 DS 订单号 |
+
+充值为 1–100000 元整数，1 元入账 1000 鲸元券，上游实际金额限制以接口响应为准。**款项进入运营方的 DeepSeek 账户，鲸元券发给本地订单绑定的 QQ。** 统计中“供应商代充值”与“人工充值实收”分列。
+
+创建只能在开放群，账单和查单支持本人私聊。每人同时一张有效待支付二维码，创建冷却 60 秒；重复消息不重复创建或发码。发码时 @申请人并提示 15 分钟内支付，后台不催付、不发过期通知，到账后再 @申请人。通知失败最多尝试三次，不影响已完成入账。
+
+后台共享查单：前 15 分钟每 10 秒查询，到期后在第 16、20、30 分钟补查，再停止自动查询。可主动查单确认迟到支付，每人冷却 30 秒，全局查单间隔至少 10 秒。失败退避；401/403 暂停网络操作，更新令牌后重载。重启恢复未完成订单，创建结果不明转待核对，不重试 POST。只有精确匹配订单号、金额、CNY、SUCCESS 和有效带时区支付时间才加券；赠送和无本地绑定的历史订单不入账。
+
+当前固定一个收款账户；更新同一账户的令牌可继续查询，不能把另一个账户的令牌直接放进相同数据目录。更换账户前处理旧订单，停服备份后使用独立数据目录。无法关联上游单号的创建异常需人工核对，本版不提供强制入账、退款或跨插件订单导入。
+
+dsAutoPay 的记录包含支付宝真实接口付款验证；**本插件目前仅通过离线测试，仍需 AstrBot + NapCat 群内发码、支付后加券与通知的实机联调**。支付接口为 DeepSeek 网页内部接口，其分页、保留窗口和长期稳定性尚未确定。
+
+## 指令
+
+| 指令 | 权限 / 含义 |
+| --- | --- |
+| `/鲸元券` | 自己的余额、冻结金额、当日用量及上限 |
+| `/鲸元券流水` | 自己最近十条记录 |
+| `/鲸元券充值 123456789 20` | AstrBot 管理员；20 元入账 20000 鲸元券，单号自动生成 |
+| `/鲸元券限额 123456789 3000` | AstrBot 管理员；每日上限 3000 鲸元券，0 表示禁止新请求 |
+| `/鲸元券统计` | 管理员；累计充值、消费、成本、估算毛利和消费前十 |
+| `/鲸元券待核对` | 管理员；最早二十条待核对请求 |
+| `/鲸元券核对 AI单号 0.0123 供应商账单已确认` | 管理员；按核实的人民币成本完成结算，依据不含空格 |
+
+管理员命令可以通过 QQ 私聊发送，避免将内部成本显示在群内。同一 QQ 在计费群之间共用钱包；私聊原生聊天不在计费范围。用户问答和钱包回复在发起的群内可见。
+
+同一条消息重复投递，只入账 / 调用一次。再次手动发送同样的充值指令属于新充值，系统无法判断是否对应同一笔微信或支付宝付款。充值前请核对付款人。MVP 不支持撤销充值或退款指令，错误入账暂需停服备份后人工处理。
+
+## 计费与账务约定
+
+- `1 元 = 1000 鲸元券`；消费 = 配置价核算成本 × 1000 × K，按请求向上取整，K 默认 1.5。
+- 缓存命中、未命中输入分别计费；输出按 `completion_tokens` 计费，不重复累加 reasoning tokens。
+- 人民币成本使用 Decimal 精确计算；鲸元券以整数存储，最小单位为 1 鲸元券，不支持小数。每请求只在最终金额上向上取整，零成本扣 0 鲸元券。例如成本 0.01 元、K=1.5，扣 15 鲸元券；成本 0.001 元，扣 2 鲸元券。
+- 模型、系统提示、人设、上下文、输出上限、流式及思考模式沿用 AstrBot 原有配置；插件不重写聊天请求或回答。
+- 调用前按 `chat_reserve` 固定预占，默认 300 鲸元券；这是用户扣费预算，不是模型 Token 上限。结算最多扣预占金额，超出部分保留完整成本及差额记录，由运营方承担。低于预占余额的请求会被拦截，可按业务需要调整配置。
+- 余额与限额检查、预占、扣费和流水使用 SQLite 事务；幂等由唯一消息来源键和请求状态保护。
+- 上海时间每日分桶，无定时清零操作；跨午夜的请求结算归属请求发起日。昨日待核对仍占钱包可用余额，但不占今天额度。
+- 修改默认限额只影响新账户；降低已有账户限额不撤销已经预占的请求。
+- 兑换比例、价格、模型及 K 在请求时快照，后续修改配置不改变旧账。
+- 原生回复缺少可信 usage、模型不匹配或费用不明时保留预占并转待核对；十分钟没有完整回复也转待核对。迟到的完整回复仍可自动结算。重载及重启将未完成请求转待核对，不自动退款或重发。由于原生钩子不能可靠区分失败前是否产生费用，本版不会把通用错误自动当作零费用。
+- 待核对成本未进入统计；管理员必须查明是否产生费用后填写实际成本，确认无费用填写 0。核对幂等且记录操作人和依据，只能操作待核对请求。
+- 收入按已消费鲸元券金额折人民币统计毛利；人工充值实收与供应商代充值分列，未消费的充值不当成利润。
+
+不保存问答正文，仅保存模型、usage、供应商响应编号、价格快照和账本。超时前没收到供应商编号时，只能结合本地时间和供应商账单人工核对。成功结算后 QQ 发送失败不会自动退费，需管理员跟进；重复消息不会重发模型请求。
+
+## 原生聊天自动扣费（v0.4.0）
+
+已移除 `/鲸问` 独立入口及直接调用 DeepSeek 的客户端。群友照常 @机器人或使用原来的唤醒方式：`on_llm_request` 根据 `event.get_sender_id()` 取得 QQ，检查钱包和日限额、预占成功后放行原请求；余额不足时停止事件并提示充值。普通群聊没有触发模型时不收费，钱包与充值命令不收费。
+
+`on_llm_response` 使用 AstrBot `TokenUsage(input_cached, input_other, output)`，或兼容的原始 OpenAI/DeepSeek usage 结算。流式片段不单独扣费，仅在最终回复结算。不同 QQ 的钱包独立，同一 QQ 跨群共用余额；响应与原事件、消息来源键绑定，避免群内串账。
+
+本地 Agent 有可访问的活动 runner 时读取累计用量，覆盖工具循环和同一 QQ 合并追问的模型用量；兼容适配器验证 runner 的事件身份和模型。启用工具但框架未暴露累计用量时转人工核对，不能把最后一轮当成整次费用。工具自身外部 API 费用、上下文压缩/图片描述等辅助模型调用，以及绕过原生钩子的其他插件直接调用，不包含在这个账本中。第三方 Agent runner 不保证提供可用的用量。跨模型回退须人工核对。本插件不能宣称拦截进程内所有模型调用。
+
+需在目标群启用本插件的事件钩子，保留 AstrBot 原有聊天入口。群外与私聊不接管。原有插件 `api_key` 和 `max_output_tokens` 配置已移除，旧值不再使用；模型服务商 API Key 和输出参数请配置在 AstrBot 中。充值的 `web_token` 保持独立。
+
+原生钩子依据 [AstrBot 官方事件文档](https://github.com/AstrBotDevs/AstrBot/blob/master/docs/en/dev/star/guides/listen-message-event.md)，累计用量适配核对了源码提交 `ec77b16eec6096dc75c76292ca329af08766af14` 的 `astr_agent_hooks.py`、`tool_loop_agent_runner.py` 和 `follow_up.py`。实际部署版本仍需联调确认。
+
+## 验证与试运行
+
+```sh
+python -m unittest discover -s tests -v
+```
+
+离线测试覆盖缓存用量、金额精度、重复入账、并发预占、跨日结算、恢复核对、超预算保护、原生聊天身份隔离、余额拦截、流式结算与用量缺失。真实试运行需检查：
+
+1. 普通群员不能人工充值 / 调额度 / 查统计；计费群余额不足时原生模型不执行，群外不被本插件拦截。
+2. 管理员充值 1 元后显示 1000 鲸元券，按原方式聊天后出现扣费流水；换一个 QQ 不应动用前一个人的余额。
+3. 对照 DeepSeek usage 和控制台账单，核对本账户价格。
+4. 日限额设 0 后拒绝问答；非零限额下并发消息不超扣。
+5. 未结算请求重载后出现在待核对列表；人工核对只扣一次。
+
+只支持一个插件实例操作此数据库，不支持多进程共享数据库部署；重载前应等待现有请求结束。备份推荐停服后复制整个插件数据目录（包括可能存在的 WAL/SHM 文件），恢复也需停服。不要仅热拷贝主数据库文件。
+
+接口依据：[AstrBot 插件开发](https://docs.astrbot.app/dev/star/plugin-new.html)、[DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)。
+
+## 整数货币版本说明
+
+默认每日上限为 3000 鲸元券，充值 0.01 元可获得 10 鲸元券；限额参数不接受非整数。当前兑换比例固定为 1000，保存在充值记录和请求价格快照中，为未来调价留出历史核算依据。统计按每笔请求当时的比例折算，不用新比例重算旧账。
+
+v0.2.0 不会自动转换 v0.1.0 的微券账本：检测到有数据的旧账本会拒绝加载，避免放大或缩小余额。若已经试用旧版，请停服备份后单独迁移；不要直接删除原账本。已保存的插件默认限额配置仍需手动改为 3000。
